@@ -13,7 +13,7 @@ pipeline {
 
     tools {
         // Must match the name set in Manage Jenkins → Tools → SonarQube Scanner
-        'hudson.plugins.sonar.SonarRunnerInstallation' 'SonarQube Scanner'
+        'hudson.plugins.sonar.SonarRunnerInstallation' 'Sonarqube Scanner'
     }
 
     environment {
