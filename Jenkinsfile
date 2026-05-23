@@ -30,6 +30,7 @@ pipeline {
 
         // ── Update these to match your actual directory layout ──
         GO_SERVICES     = 'services/api'
+	GOTOOLCHAIN     = 'local'
         NEXTJS_SERVICES = 'services/frontend'
         PYTHON_SERVICES = 'services/rule-engine'
     }
@@ -42,13 +43,13 @@ pipeline {
     }
 
     stages {
-
-        stage('Checkout') {
+	stage('Checkout') {
             steps {
                 script {
                     def scmVars = checkout scm
-                    env.IMAGE_TAG = scmVars.GIT_COMMIT.take(8)
-                    echo "Commit: ${env.IMAGE_TAG} | Branch: ${scmVars.GIT_BRANCH}"
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.BRANCH_NAME = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    echo "Commit: ${env.IMAGE_TAG} | Branch: ${env.BRANCH_NAME}"
                 }
             }
         }
