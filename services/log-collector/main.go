@@ -37,20 +37,9 @@ func main() {
 	}
 
 	// ── Logger ─────────────────────────────────────────────────────────
-	var level slog.Level
-	switch strings.ToLower(logLevel) {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		level = slog.LevelInfo
-	}
-
+	// Fix 3a: switch extracted to parseLogLevel()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: level,
+		Level: parseLogLevel(logLevel),
 	})).With(slog.String("service", serviceName))
 
 	slog.SetDefault(logger)
@@ -65,16 +54,23 @@ func main() {
 		os.Exit(1)
 	}
 
+<<<<<<< HEAD
 	// ── Database — retry until DB is ready ─────────────────────────────
 	// The container starts immediately after db reports healthy, but
 	// PostgreSQL may still be initialising schemas. Retry for up to 60s.
 	db, err := sql.Open("pgx", pgDSN)
+=======
+	// ── Database ────────────────────────────────────────────────────────
+	// Fix 3b: retry loop extracted to connectWithRetry()
+	db, err := connectWithRetry(pgDSN, logger)
+>>>>>>> 65fb1bc6e6fc0131f4b70187d61f05de65bba0e4
 	if err != nil {
-		logger.Error("failed to open database", slog.String("error", err.Error()))
+		logger.Error("failed to connect to database", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 	defer db.Close()
 
+<<<<<<< HEAD
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
@@ -105,6 +101,8 @@ func main() {
 		time.Sleep(dbRetryDelay)
 	}
 
+=======
+>>>>>>> 65fb1bc6e6fc0131f4b70187d61f05de65bba0e4
 	// ── Batch insert channel ───────────────────────────────────────────
 	entryCh := make(chan logEntry, 1000)
 
@@ -350,4 +348,64 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// parseLogLevel converts a string log level to slog.Level
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// connectWithRetry attempts to connect to the database with retry logic
+func connectWithRetry(dsn string, logger *slog.Logger) (*sql.DB, error) {
+	var db *sql.DB
+	var err error
+	
+	maxRetries := 5
+	retryDelay := 3 * time.Second
+	
+	for i := 0; i < maxRetries; i++ {
+		db, err = sql.Open("pgx", dsn)
+		if err != nil {
+			logger.Warn("failed to open database connection, retrying",
+				slog.Int("attempt", i+1),
+				slog.Int("max_retries", maxRetries),
+				slog.String("error", err.Error()),
+			)
+			time.Sleep(retryDelay)
+			continue
+		}
+		
+		// Test the connection
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = db.PingContext(ctx)
+		cancel()
+		
+		if err == nil {
+			logger.Info("database connection established",
+				slog.Int("attempt", i+1),
+			)
+			return db, nil
+		}
+		
+		logger.Warn("database ping failed, retrying",
+			slog.Int("attempt", i+1),
+			slog.Int("max_retries", maxRetries),
+			slog.String("error", err.Error()),
+		)
+		db.Close()
+		time.Sleep(retryDelay)
+	}
+	
+	return nil, fmt.Errorf("failed to connect after %d attempts: %w", maxRetries, err)
 }
