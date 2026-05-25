@@ -258,45 +258,32 @@ function FilterModal({ isOpen, onClose, onApply, initialKey = "severity", initia
   const [filterKey, setFilterKey] = useState(initialKey);
   const [filterValue, setFilterValue] = useState(initialValue);
 
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  // Handle dialog open/close
+  // Reset form when modal opens
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
     if (isOpen) {
-      dialog.showModal();
-      
-      // Add event listeners
-      const handleCancel = (e: Event) => {
-        e.preventDefault();
-        onClose();
-      };
-      
-      const handleClick = (e: MouseEvent) => {
-        const rect = dialog.getBoundingClientRect();
-        const isInDialog = (
-          rect.top <= e.clientY &&
-          e.clientY <= rect.top + rect.height &&
-          rect.left <= e.clientX &&
-          e.clientX <= rect.left + rect.width
-        );
-        if (!isInDialog) {
-          onClose();
-        }
-      };
-      
-      dialog.addEventListener('cancel', handleCancel);
-      dialog.addEventListener('click', handleClick);
-      
-      return () => {
-        dialog.removeEventListener('cancel', handleCancel);
-        dialog.removeEventListener('click', handleClick);
-      };
-    } else {
-      dialog.close();
+      setFilterKey(initialKey);
+      setFilterValue(initialValue);
     }
+  }, [isOpen, initialKey, initialValue]);
+
+  // Handle Escape key globally
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        onClose();
+      }
+    };
+    
+    if (isOpen) {
+      document.addEventListener('keydown', handleEscape);
+      // Prevent body scroll when modal is open
+      document.body.style.overflow = 'hidden';
+    }
+    
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
+    };
   }, [isOpen, onClose]);
 
   const handleApply = () => {
@@ -306,8 +293,13 @@ function FilterModal({ isOpen, onClose, onApply, initialKey = "severity", initia
     }
   };
 
-  // Keyboard handling moved to the buttons and focusable elements
-  const handleKeyDownOnInput = (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
     if (e.key === 'Enter' && filterValue) {
       handleApply();
     }
@@ -321,7 +313,7 @@ function FilterModal({ isOpen, onClose, onApply, initialKey = "severity", initia
           className="siem-modal-select"
           value={filterValue}
           onChange={(e) => setFilterValue(e.target.value)}
-          onKeyDown={handleKeyDownOnInput}
+          onKeyDown={handleKeyDown}
           aria-label="Filter severity value"
         >
           <option value="">-- select --</option>
@@ -340,7 +332,7 @@ function FilterModal({ isOpen, onClose, onApply, initialKey = "severity", initia
           className="siem-modal-select"
           value={filterValue}
           onChange={(e) => setFilterValue(e.target.value)}
-          onKeyDown={handleKeyDownOnInput}
+          onKeyDown={handleKeyDown}
           aria-label="Filter status value"
         >
           <option value="">-- select --</option>
@@ -359,19 +351,26 @@ function FilterModal({ isOpen, onClose, onApply, initialKey = "severity", initia
         placeholder="e.g. ERROR"
         value={filterValue}
         onChange={(e) => setFilterValue(e.target.value)}
-        onKeyDown={handleKeyDownOnInput}
+        onKeyDown={handleKeyDown}
         aria-label="Filter text value"
       />
     );
   };
 
+  if (!isOpen) return null;
+
   return (
-    <dialog
-      ref={dialogRef}
+    <div
       className="siem-modal-overlay"
-      aria-label="Filter dialog"
+      onClick={handleBackdropClick}
+      role="presentation"
     >
-      <div className="siem-modal">
+      <div
+        className="siem-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Filter dialog"
+      >
         <div className="siem-modal-title">Add Filter</div>
         <div className="siem-modal-row">
           <label htmlFor="filter-key" className="siem-modal-label">Field</label>
@@ -411,7 +410,7 @@ function FilterModal({ isOpen, onClose, onApply, initialKey = "severity", initia
           </button>
         </div>
       </div>
-    </dialog>
+    </div>
   );
 }
 
