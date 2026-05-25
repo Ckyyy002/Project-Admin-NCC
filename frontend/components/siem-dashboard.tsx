@@ -245,6 +245,155 @@ function Badge({ label, variant }: { readonly label: string; readonly variant: "
   return <span className={`siem-badge siem-badge-${variant}`}>{label}</span>;
 }
 
+// ── Filter dropdown component ─────────────────────────────────────────────────
+interface FilterDropdownProps {
+  readonly onApply: (key: string, value: string) => void;
+  readonly onClose: () => void;
+}
+
+function FilterDropdown({ onApply, onClose }: FilterDropdownProps) {
+  const [filterKey, setFilterKey] = useState("severity");
+  const [filterValue, setFilterValue] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [onClose]);
+
+  const handleApply = () => {
+    if (filterValue) {
+      onApply(filterKey, filterValue);
+      onClose();
+    }
+  };
+
+  const renderFilterInput = () => {
+    if (filterKey === "severity") {
+      return (
+        <select
+          id="filter-value"
+          className="siem-dropdown-select"
+          value={filterValue}
+          onChange={(e) => setFilterValue(e.target.value)}
+          aria-label="Filter severity value"
+          autoFocus
+        >
+          <option value="">-- select --</option>
+          <option value="CRITICAL">CRITICAL</option>
+          <option value="HIGH">HIGH</option>
+          <option value="WARN">WARN</option>
+          <option value="INFO">INFO</option>
+        </select>
+      );
+    }
+    
+    if (filterKey === "status") {
+      return (
+        <select
+          id="filter-value"
+          className="siem-dropdown-select"
+          value={filterValue}
+          onChange={(e) => setFilterValue(e.target.value)}
+          aria-label="Filter status value"
+          autoFocus
+        >
+          <option value="">-- select --</option>
+          <option value="open">open</option>
+          <option value="acknowledged">acknowledged</option>
+          <option value="resolved">resolved</option>
+        </select>
+      );
+    }
+    
+    return (
+      <input
+        id="filter-value"
+        className="siem-dropdown-input"
+        type="text"
+        placeholder="e.g. ERROR"
+        value={filterValue}
+        onChange={(e) => setFilterValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && filterValue) {
+            handleApply();
+          }
+        }}
+        aria-label="Filter text value"
+        autoFocus
+      />
+    );
+  };
+
+  return (
+    <div className="siem-dropdown" ref={dropdownRef}>
+      <div className="siem-dropdown-header">
+        <span className="siem-dropdown-title">Add Filter</span>
+      </div>
+      <div className="siem-dropdown-body">
+        <div className="siem-dropdown-row">
+          <label htmlFor="filter-key" className="siem-dropdown-label">Field</label>
+          <select
+            id="filter-key"
+            className="siem-dropdown-select"
+            value={filterKey}
+            onChange={(e) => {
+              setFilterKey(e.target.value);
+              setFilterValue("");
+            }}
+            aria-label="Filter field selector"
+          >
+            <option value="severity">Severity</option>
+            <option value="status">Status</option>
+            <option value="level">Level</option>
+          </select>
+        </div>
+        <div className="siem-dropdown-row">
+          <label htmlFor="filter-value" className="siem-dropdown-label">Value</label>
+          {renderFilterInput()}
+        </div>
+      </div>
+      <div className="siem-dropdown-footer">
+        <button
+          type="button"
+          className="siem-dropdown-cancel"
+          onClick={onClose}
+          aria-label="Cancel filter"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="siem-dropdown-apply"
+          disabled={!filterValue}
+          onClick={handleApply}
+          aria-label="Apply filter"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SiemDashboard() {
   const router = useRouter();
@@ -256,9 +405,7 @@ export default function SiemDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<{ key: string; value: string } | null>(null);
-  const [showFilterModal, setShowFilterModal] = useState(false);
-  const [filterKey, setFilterKey] = useState("level");
-  const [filterValue, setFilterValue] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handleUnauthorized = useCallback(() => {
@@ -330,6 +477,11 @@ export default function SiemDashboard() {
     return pages;
   }, [page, totalPages]);
 
+  const handleApplyFilter = (key: string, value: string) => {
+    setActiveFilter({ key, value });
+    setPage(1);
+  };
+
   if (loading && !overview) {
     return (
       <div className="siem-shell siem-loading">
@@ -364,6 +516,7 @@ export default function SiemDashboard() {
             type="button"
             onClick={() => { load(false).catch(() => undefined); }}
             disabled={loading}
+            aria-label="Refresh data"
           >
             ↺ Refresh
           </button>
@@ -390,74 +543,25 @@ export default function SiemDashboard() {
             >×</button>
           </span>
         ) : null}
-        <button
-          type="button"
-          className="siem-add-filter"
-          onClick={() => setShowFilterModal(true)}
-        >+ Add filter</button>
+        <div className="siem-filter-dropdown-container">
+          <button
+            type="button"
+            className="siem-add-filter"
+            onClick={() => setShowDropdown(!showDropdown)}
+            aria-label="Add filter"
+            aria-expanded={showDropdown}
+          >
+            + Add filter
+          </button>
+          {showDropdown && (
+            <FilterDropdown
+              onApply={handleApplyFilter}
+              onClose={() => setShowDropdown(false)}
+            />
+          )}
+        </div>
         <span className="siem-time-badge">⏱ Last 7 days</span>
       </div>
-
-      {/* ── Filter modal ── */}
-      {showFilterModal ? (
-        <div className="siem-modal-overlay" onClick={() => setShowFilterModal(false)}>
-          <div className="siem-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="siem-modal-title">Add Filter</div>
-            <div className="siem-modal-row">
-              <label className="siem-modal-label">Field</label>
-              <select
-                className="siem-modal-select"
-                value={filterKey}
-                onChange={(e) => setFilterKey(e.target.value)}
-              >
-                <option value="severity">Severity</option>
-                <option value="status">Status</option>
-                <option value="level">Level</option>
-              </select>
-            </div>
-            <div className="siem-modal-row">
-              <label className="siem-modal-label">Value</label>
-              {filterKey === "severity" ? (
-                <select className="siem-modal-select" value={filterValue} onChange={(e) => setFilterValue(e.target.value)}>
-                  <option value="">-- select --</option>
-                  <option value="CRITICAL">CRITICAL</option>
-                  <option value="HIGH">HIGH</option>
-                  <option value="WARN">WARN</option>
-                  <option value="INFO">INFO</option>
-                </select>
-              ) : filterKey === "status" ? (
-                <select className="siem-modal-select" value={filterValue} onChange={(e) => setFilterValue(e.target.value)}>
-                  <option value="">-- select --</option>
-                  <option value="open">open</option>
-                  <option value="acknowledged">acknowledged</option>
-                  <option value="resolved">resolved</option>
-                </select>
-              ) : (
-                <input
-                  className="siem-modal-input"
-                  type="text"
-                  placeholder="e.g. ERROR"
-                  value={filterValue}
-                  onChange={(e) => setFilterValue(e.target.value)}
-                />
-              )}
-            </div>
-            <div className="siem-modal-actions">
-              <button type="button" className="siem-modal-cancel" onClick={() => setShowFilterModal(false)}>Cancel</button>
-              <button
-                type="button"
-                className="siem-modal-apply"
-                disabled={!filterValue}
-                onClick={() => {
-                  setActiveFilter({ key: filterKey, value: filterValue });
-                  setPage(1);
-                  setShowFilterModal(false);
-                }}
-              >Apply</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {error ? <p className="siem-error">{error}</p> : null}
 
@@ -660,6 +764,7 @@ export default function SiemDashboard() {
                   type="button"
                   disabled={page === 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
                 >
                   ‹
                 </button>
@@ -669,6 +774,8 @@ export default function SiemDashboard() {
                     type="button"
                     className={`siem-pg-btn ${page === p ? "siem-pg-active" : ""}`}
                     onClick={() => setPage(p)}
+                    aria-label={`Go to page ${p}`}
+                    aria-current={page === p ? "page" : undefined}
                   >
                     {p}
                   </button>
@@ -678,6 +785,7 @@ export default function SiemDashboard() {
                   type="button"
                   disabled={page >= totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
                 >
                   ›
                 </button>
