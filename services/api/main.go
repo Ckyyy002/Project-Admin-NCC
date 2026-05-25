@@ -73,17 +73,15 @@ func main() {
 	r.Get("/ws", hub.HandleWebSocket())
 
 	r.Route("/api/siem", func(r chi.Router) {
-		// Overview dashboard (used by the SIEM frontend page)
+		// Overview (dashboard summary)
 		r.Get("/overview", handlers.GetSiemOverview(database))
 
 		// Events
 		r.Get("/events", handlers.ListEvents(database))
 		r.Get("/events/{id}", handlers.GetEvent(database))
 
-		// Alerts — GetSiemAlerts returns the shape the frontend expects
-		// (items, total, page, page_size with agent_id/technique/tactic fields).
-		// UpdateAlertStatus remains for PATCH /alerts/{id}.
-		r.Get("/alerts", handlers.GetSiemAlerts(database))
+		// Alerts
+		r.Get("/alerts", handlers.ListAlerts(database))
 		r.Patch("/alerts/{id}", handlers.UpdateAlertStatus(database))
 
 		// Log Sources
