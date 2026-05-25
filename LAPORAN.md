@@ -262,7 +262,7 @@ pgdata (persistent)
 ## 4. docker-compose.jenkins-sonarqube.yml — Stack CI/CD
 
 **File:** `docker-compose.jenkins-sonarqube.yml`  
-**Owner:** E3 Lucky Himawan Prasetya  
+**Owner:** E3 Lucky Himawan Prasetya & E1 Mochammad Irfan Sandy
 **Fungsi:** Menjalankan infrastruktur CI/CD yang terpisah dari aplikasi produksi — Jenkins, Docker-in-Docker, dan SonarQube.
 
 ### 4.1 Service: `jenkins-docker` (Docker-in-Docker / DinD)
@@ -617,7 +617,7 @@ POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 ```
 
-Nama database, user, dan password PostgreSQL. Nilai default hanya untuk development — **harus diganti** di produksi dengan password yang kuat.
+Nama database, user, dan password PostgreSQL.
 
 ### 6.2 Konfigurasi Backend
 
@@ -657,7 +657,7 @@ WS_POLL_INTERVAL_MS=500
 | `PARSER_POLL_INTERVAL_MS=500` | Log Parser memeriksa tabel `raw_logs` setiap 500ms untuk baris yang belum diproses. Menghasilkan latensi parsing < 1 detik. |
 | `WS_POLL_INTERVAL_MS=500` | WebSocket server memeriksa event baru setiap 500ms untuk di-push ke semua client yang terkoneksi. |
 
-### 6.4 Konfigurasi LLM
+### 6.4 Konfigurasi LLM (E1 Mochammad Irfan Sandy)
 
 ```env
 LLM_MODEL_NAME=hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q6_K
@@ -889,7 +889,7 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-**Mengapa multi-stage?** Stage `builder` berisi seluruh toolchain Node.js + `node_modules` dev (~500MB). Stage `runner` hanya menyalin output yang dibutuhkan (~100MB). Image final jauh lebih kecil dan tidak mengandung tool pengembangan yang bisa menjadi attack surface.
+Stage `builder` berisi seluruh toolchain Node.js + `node_modules` dev (~500MB). Stage `runner` hanya menyalin output yang dibutuhkan (~100MB). Image final jauh lebih kecil dan tidak mengandung tool pengembangan yang bisa menjadi attack surface.
 
 ---
 
@@ -1039,7 +1039,7 @@ Nginx menambahkan security headers ke setiap response:
 
 ## 11. scripts/ — Helper Scripts
 
-**Owner:** E3 Lucky Himawan Prasetya  
+**Owner:** E3 Lucky Himawan Prasetya & E1 Mochammad Irfan Sandy
 **Lokasi:** `scripts/`
 
 | Script | Fungsi |
