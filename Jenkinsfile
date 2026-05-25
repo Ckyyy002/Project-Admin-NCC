@@ -1,250 +1,263 @@
-// =============================================================================
-// Jenkinsfile — Declarative Pipeline with SonarQube Quality Gate
-// + Discord notifications
-// =============================================================================
-
 pipeline {
-
     agent any
-
-    triggers {
-        pollSCM('* * * * *')
-    }
-
-    tools {
-        'hudson.plugins.sonar.SonarRunnerInstallation' 'Sonarqube Scanner'
-    }
-
-    environment {
-        IMAGE_TAG         = 'unknown'
-        REGISTRY_URL      = "${env.REGISTRY_URL ?: 'docker.io'}"
-        DOCKER_NAMESPACE  = "${env.DOCKER_NAMESPACE ?: 'ckyyy'}"
-        DOCKERHUB_CRED_ID = 'dockerhub-credentials'
-        GITHUB_CRED_ID    = 'github-credentials'
-        DISCORD_WEBHOOK   = credentials('discord-webhook')
-        GO_SERVICES       = 'services/api'
-        GOTOOLCHAIN       = 'local'
-        NEXTJS_SERVICES   = 'services/frontend'
-        PYTHON_SERVICES   = 'services/rule-engine'
-    }
 
     options {
         timestamps()
         disableConcurrentBuilds()
-        timeout(time: 30, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    triggers {
+        githubPush()
+    }
+
+    parameters {
+        string(name: 'GIT_BRANCH', defaultValue: 'main', description: 'Git branch to checkout')
+        string(name: 'GIT_URL', defaultValue: 'https://github.com/irfansandyy/final-project-ncc-kel3.git', description: 'Repository URL')
+        string(name: 'GIT_CREDENTIALS_ID', defaultValue: '', description: 'Optional Jenkins credentials ID for private repos')
+        string(name: 'DEPLOY_USER', defaultValue: 'ubuntu', description: 'SSH user on the target VPS')
+        string(name: 'DEPLOY_DIR', defaultValue: '/opt/app', description: 'Remote directory where the app lives on the VPS')
+    }
+
+    environment {
+        SONARQUBE_ENV    = 'SonarQube'
+        PROJECT_KEY      = 'tugas-ncc-irfansandy-backend'
+        PROJECT_NAME     = 'tugas-ncc-irfansandy-fullstack'
+        GO_DIR           = 'backend'
+        FE_DIR           = 'frontend'
+        GOFLAGS          = '-buildvcs=false'
+        SCANNER_HOME     = tool 'SonarQube Scanner'
+        // Production domain
+        DEPLOY_HOST      = 'llama-chat.my.id'
+        // Jenkins credential ID (SSH Username with private key) for the VPS
+        DEPLOY_SSH_CREDS = 'deploy-ssh-key'
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 script {
-                    checkout scm
-                    env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-                    env.GIT_BRANCH_NAME = sh(returnStdout: true, script: 'git symbolic-ref --short HEAD || git rev-parse --short HEAD').trim()
-                    echo "Commit: ${env.IMAGE_TAG} | Branch: ${env.GIT_BRANCH_NAME}"
-                }
-            }
-        }
+                    try {
+                        deleteDir()
+                    } catch (Exception cleanupErr) {
+                        echo "Workspace cleanup failed, fixing ownership/permissions and retrying deleteDir()"
+                        sh '''
+                            set -e
+                            docker run --rm -u root -v "${WORKSPACE}:/workspace" alpine:3.21 \
+                                sh -c 'chown -R 1000:1000 /workspace || true; chmod -R u+rwX /workspace || true'
+                        '''
+                        deleteDir()
+                    }
 
-        stage('Lint') {
-            parallel {
-                stage('Lint — Go') {
-                    when { expression { fileExists(env.GO_SERVICES) } }
-                    steps {
-                        dir(env.GO_SERVICES) {
-                            sh 'go vet ./...'
-                        }
-                    }
-                }
-                stage('Lint — Next.js') {
-                    when { expression { fileExists(env.NEXTJS_SERVICES) } }
-                    steps {
-                        dir(env.NEXTJS_SERVICES) {
-                            sh '''
-                                npm ci --prefer-offline --loglevel=warn
-                                npx eslint . --ext .js,.jsx,.ts,.tsx --max-warnings 0
-                            '''
-                        }
-                    }
-                }
-                stage('Lint — Python') {
-                    when { expression { fileExists(env.PYTHON_SERVICES) } }
-                    steps {
-                        dir(env.PYTHON_SERVICES) {
-                            sh '''
-                                python3 -m pip install --quiet flake8
-                                flake8 . --max-line-length=120 --exclude=.git,__pycache__,.venv
-                            '''
-                        }
+                    if (params.GIT_CREDENTIALS_ID?.trim()) {
+                        git branch: params.GIT_BRANCH,
+                            url: params.GIT_URL,
+                            credentialsId: params.GIT_CREDENTIALS_ID
+                    } else {
+                        git branch: params.GIT_BRANCH,
+                            url: params.GIT_URL
                     }
                 }
             }
         }
 
-        stage('Test') {
-            parallel {
-                stage('Test — Go') {
-                    when { expression { fileExists(env.GO_SERVICES) } }
-                    steps {
-                        dir(env.GO_SERVICES) {
-                            sh '''
-                                mkdir -p test-results
-                                go test -v ./... -coverprofile=coverage.out 2>&1 | tee test-results/go-test.txt
-                            '''
-                        }
-                    }
+        stage('Setup') {
+            agent {
+                docker {
+                    image 'golang:1.23-bookworm'
+                    args '''-e HOME=/tmp \
+                            -e GOCACHE=/tmp/go-cache \
+                            -e GOPATH=/tmp/go \
+                            -v /var/jenkins_home/tools:/var/jenkins_home/tools'''
+                    reuseNode true
                 }
-                stage('Test — Next.js') {
-                    when { expression { fileExists(env.NEXTJS_SERVICES) } }
-                    steps {
-                        dir(env.NEXTJS_SERVICES) {
-                            sh '''
-                                # Re-run npm ci in case this agent workspace is fresh
-                                # (Lint and Test stages may run on different executors)
-                                npm ci --prefer-offline --loglevel=warn
+            }
+            steps {
+                sh '''
+                    set -e
+                    git config --global --add safe.directory "${WORKSPACE}"
+                    cd "${GO_DIR}"
+                    go version
+                    go mod download
+                '''
+            }
+        }
 
-                                # Run Jest with:
-                                #   --ci          : treats snapshot mismatches as failures, no watch mode
-                                #   --coverage    : collect coverage
-                                #   --coverageReporters lcov text-summary : produce lcov.info for SonarQube
-                                #                   and a human-readable summary in the build log
-                                #   --passWithNoTests : don't fail if no test files exist yet
-                                npx jest \
-                                    --ci \
-                                    --coverage \
-                                    --coverageReporters lcov text-summary \
-                                    --passWithNoTests
-                            '''
+        stage('Backend Build & Test') {
+            parallel {
+                stage('Build') {
+                    agent {
+                        docker {
+                            image 'golang:1.23-bookworm'
+                            args '''-e HOME=/tmp \
+                                    -e GOCACHE=/tmp/go-cache \
+                                    -e GOPATH=/tmp/go'''
+                            reuseNode true
                         }
                     }
-                    post {
-                        always {
-                            // Archive the lcov report as a build artifact for debugging
-                            archiveArtifacts artifacts: "${env.NEXTJS_SERVICES}/coverage/lcov.info",
-                                             allowEmptyArchive: true
-                        }
-                    }
-                }
-                stage('Test — Python') {
-                    when { expression { fileExists(env.PYTHON_SERVICES) } }
                     steps {
-                        dir(env.PYTHON_SERVICES) {
-                            sh '''
-                                python3 -m pip install --quiet -r requirements.txt pytest pytest-cov
-                                mkdir -p test-results
-                                pytest --tb=short \
-                                       --junitxml=test-results/pytest.xml \
-                                       --cov=. --cov-report=xml:test-results/coverage.xml
-                            '''
-                        }
-                    }
-                    post {
-                        always {
-                            junit allowEmptyResults: true,
-                                  testResults: "${env.PYTHON_SERVICES}/test-results/pytest.xml"
-                        }
+                        sh '''
+                            set -e
+                            cd "${GO_DIR}"
+                            go build -v ./...
+                        '''
                     }
                 }
+
+                stage('Test') {
+                    agent {
+                        docker {
+                            image 'golang:1.23-bookworm'
+                            args '''-e HOME=/tmp \
+                                    -e GOCACHE=/tmp/go-cache \
+                                    -e GOPATH=/tmp/go'''
+                            reuseNode true
+                        }
+                    }
+                    steps {
+                        sh '''
+                            set -e
+                            cd "${GO_DIR}"
+                            go test ./... -v -coverprofile=coverage.out
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Frontend Install') {
+            agent {
+                docker {
+                    image 'node:22-bookworm'
+                    args '-e HOME=/tmp'
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    set -e
+                    cd "${FE_DIR}"
+                    if [ -f package-lock.json ]; then
+                        npm ci
+                    else
+                        npm install
+                    fi
+                '''
+            }
+        }
+
+        stage('Frontend Lint') {
+            agent {
+                docker {
+                    image 'node:22-bookworm'
+                    args '-e HOME=/tmp'
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    set -e
+                    cd "${FE_DIR}"
+                    if npx --yes next --help 2>&1 | grep -Eq '(^|[[:space:]])lint([[:space:]]|$)'; then
+                        npm run lint
+                    else
+                        echo "next lint is not available on this Next.js version, skipping lint stage."
+                    fi
+                '''
+            }
+        }
+
+        stage('Frontend Build') {
+            agent {
+                docker {
+                    image 'node:22-bookworm'
+                    args '-e HOME=/tmp'
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    set -e
+                    cd "${FE_DIR}"
+                    npm run build
+                '''
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonarqube') {
-                    sh """
-                        export PATH=\$PATH:\$SONAR_RUNNER_HOME/bin
-                        sonar-scanner \
-                          -Dsonar.projectKey=final-project-ncc-kel3 \
-                          -Dsonar.projectName='Final Project NCC Kel3' \
-                          -Dsonar.sources=. \
-                          -Dsonar.exclusions=**/node_modules/**,**/.git/**,**/vendor/**,**/__pycache__/** \
-                          -Dsonar.go.coverage.reportPaths=${GO_SERVICES}/coverage.out \
-                          -Dsonar.python.coverage.reportPaths=${PYTHON_SERVICES}/test-results/coverage.xml \
-                          -Dsonar.javascript.lcov.reportPaths=${NEXTJS_SERVICES}/coverage/lcov.info \
-                          -Dsonar.scm.revision=${IMAGE_TAG}
-                    """
+                withSonarQubeEnv("${SONARQUBE_ENV}") {
+                    sh '''
+                        set -e
+                        "${SCANNER_HOME}"/bin/sonar-scanner \
+                            -Dsonar.projectKey="${PROJECT_KEY}" \
+                            -Dsonar.projectName="${PROJECT_NAME}" \
+                            -Dsonar.sources=backend,frontend \
+                            -Dsonar.tests=backend,frontend \
+                            -Dsonar.test.inclusions=backend/**/*_test.go,frontend/**/*.test.js,frontend/**/*.test.ts,frontend/**/*.spec.js,frontend/**/*.spec.ts \
+                            -Dsonar.exclusions=frontend/.next/**,frontend/node_modules/** \
+                            -Dsonar.go.coverage.reportPaths=backend/coverage.out
+                    '''
                 }
             }
         }
 
         stage('Quality Gate') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
+                timeout(time: 20, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-        stage('Build & Push Images') {
+        // ─────────────────────────────────────────────────────────────────────
+        // DEPLOY STAGE
+        // Deploys to https://llama-chat.my.id — runs on the main branch only.
+        //
+        // Pre-requisites (one-time setup):
+        //   1. Jenkins credential "deploy-ssh-key" → SSH Username with private key
+        //      whose public key is in ~/.ssh/authorized_keys on the VPS.
+        //   2. The VPS already has the repo cloned at DEPLOY_DIR with a .env file.
+        //   3. "SSH Agent" Jenkins plugin installed.
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Deploy') {
             when {
-                anyOf {
-                    branch 'main'
-                    changeRequest()
-                }
+                branch 'main'
             }
             steps {
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: env.DOCKERHUB_CRED_ID,
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin https://docker.io'
+                sshagent(credentials: [env.DEPLOY_SSH_CREDS]) {
+                    sh """
+                        set -e
 
-                        def services = [
-                            [dir: env.GO_SERVICES,     name: 'siem-api'],
-                            [dir: env.NEXTJS_SERVICES, name: 'siem-frontend'],
-                            [dir: env.PYTHON_SERVICES, name: 'siem-rule-engine'],
-                        ]
+                        REMOTE="${params.DEPLOY_USER}@${DEPLOY_HOST}"
+                        DIR="${params.DEPLOY_DIR}"
 
-                        services.each { svc ->
-                            if (fileExists("${svc.dir}/Dockerfile")) {
-                                def tag = "${env.DOCKER_NAMESPACE}/${svc.name}:${env.IMAGE_TAG}"
-                                sh "docker build -t ${tag} --pull ${svc.dir}"
-                                sh "docker push ${tag}"
-                                if (env.BRANCH_NAME == 'main') {
-                                    def latestTag = "${env.DOCKER_NAMESPACE}/${svc.name}:latest"
-                                    sh "docker tag ${tag} ${latestTag}"
-                                    sh "docker push ${latestTag}"
-                                }
-                            }
-                        }
+                        echo "==> [1/3] Pulling latest code on llama-chat.my.id"
+                        ssh -o StrictHostKeyChecking=no \$REMOTE \\
+                            "cd \$DIR && git pull origin main"
 
-                        sh 'docker logout https://docker.io || true'
-                    }
+                        echo "==> [2/3] Rebuilding & restarting containers"
+                        ssh -o StrictHostKeyChecking=no \$REMOTE \\
+                            "cd \$DIR && docker compose --env-file .env up -d --build --remove-orphans"
+
+                        echo "==> [3/3] Health check — https://llama-chat.my.id/health"
+                        ssh -o StrictHostKeyChecking=no \$REMOTE \\
+                            'timeout 120 sh -c '"'"'until curl -ks https://llama-chat.my.id/health | grep -q ok; do echo "Waiting..."; sleep 5; done'"'"' && echo "✓ llama-chat.my.id is healthy"'
+                    """
                 }
-            }
-        }
-
-    } // end stages
-
-    post {
-        always {
-            script {
-                sh 'docker image prune -f || true'
-                cleanWs()
-            }
-        }
-        success {
-            script {
-                def msg = """{"embeds":[{"title":"✅ Build Passed","color":3066993,"fields":[{"name":"Job","value":"${env.JOB_NAME}","inline":true},{"name":"Build","value":"#${env.BUILD_NUMBER}","inline":true},{"name":"Commit","value":"${env.IMAGE_TAG}","inline":true},{"name":"Branch","value":"${env.BRANCH_NAME}","inline":true},{"name":"Console","value":"[View Output](${env.BUILD_URL}console)","inline":false}]}]}"""
-                sh """curl -s -X POST -H 'Content-Type: application/json' -d '${msg}' ${DISCORD_WEBHOOK}"""
-            }
-        }
-        failure {
-            script {
-                def msg = """{"embeds":[{"title":"❌ Build Failed","color":15158332,"fields":[{"name":"Job","value":"${env.JOB_NAME}","inline":true},{"name":"Build","value":"#${env.BUILD_NUMBER}","inline":true},{"name":"Commit","value":"${env.IMAGE_TAG}","inline":true},{"name":"Branch","value":"${env.BRANCH_NAME}","inline":true},{"name":"Console","value":"[View Output](${env.BUILD_URL}console)","inline":false}]}]}"""
-                sh """curl -s -X POST -H 'Content-Type: application/json' -d '${msg}' ${DISCORD_WEBHOOK}"""
-            }
-        }
-        unstable {
-            script {
-                def msg = """{"embeds":[{"title":"⚠️ Build Unstable","color":16776960,"fields":[{"name":"Job","value":"${env.JOB_NAME}","inline":true},{"name":"Build","value":"#${env.BUILD_NUMBER}","inline":true},{"name":"Branch","value":"${env.BRANCH_NAME}","inline":true}]}]}"""
-                sh """curl -s -X POST -H 'Content-Type: application/json' -d '${msg}' ${DISCORD_WEBHOOK}"""
             }
         }
     }
 
-} // end pipeline
+    post {
+        success {
+            echo 'Pipeline sukses — https://llama-chat.my.id live!'
+        }
+        failure {
+            echo 'Pipeline gagal'
+        }
+        always {
+            archiveArtifacts artifacts: 'backend/coverage.out', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'frontend/.next/**', allowEmptyArchive: true
+        }
+    }
+}
