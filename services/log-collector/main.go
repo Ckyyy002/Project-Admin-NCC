@@ -54,23 +54,6 @@ func main() {
 		os.Exit(1)
 	}
 
-<<<<<<< HEAD
-	// ── Database — retry until DB is ready ─────────────────────────────
-	// The container starts immediately after db reports healthy, but
-	// PostgreSQL may still be initialising schemas. Retry for up to 60s.
-	db, err := sql.Open("pgx", pgDSN)
-=======
-	// ── Database ────────────────────────────────────────────────────────
-	// Fix 3b: retry loop extracted to connectWithRetry()
-	db, err := connectWithRetry(pgDSN, logger)
->>>>>>> 65fb1bc6e6fc0131f4b70187d61f05de65bba0e4
-	if err != nil {
-		logger.Error("failed to connect to database", slog.String("error", err.Error()))
-		os.Exit(1)
-	}
-	defer db.Close()
-
-<<<<<<< HEAD
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
@@ -101,8 +84,6 @@ func main() {
 		time.Sleep(dbRetryDelay)
 	}
 
-=======
->>>>>>> 65fb1bc6e6fc0131f4b70187d61f05de65bba0e4
 	// ── Batch insert channel ───────────────────────────────────────────
 	entryCh := make(chan logEntry, 1000)
 
