@@ -54,35 +54,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-
-	const maxDBRetries = 12
-	const dbRetryDelay = 5 * time.Second
-
-	for attempt := 1; attempt <= maxDBRetries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pingErr := db.PingContext(ctx)
-		cancel()
-		if pingErr == nil {
-			logger.Info("connected to database", slog.Int("attempt", attempt))
-			break
-		}
-		if attempt == maxDBRetries {
-			logger.Error("failed to connect to database after retries",
-				slog.String("error", pingErr.Error()),
-				slog.Int("attempts", maxDBRetries),
-			)
-			os.Exit(1)
-		}
-		logger.Warn("database not ready, retrying",
-			slog.String("error", pingErr.Error()),
-			slog.Int("attempt", attempt),
-			slog.Duration("retry_in", dbRetryDelay),
-		)
-		time.Sleep(dbRetryDelay)
+	// ── Database ────────────────────────────────────────────────────────
+	// Fix 3b: retry loop extracted to connectWithRetry()
+	db, err := connectWithRetry(pgDSN, logger)
+	if err != nil {
+		logger.Error("failed to connect to database", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
+	defer db.Close()
 
 	// ── Batch insert channel ───────────────────────────────────────────
 	entryCh := make(chan logEntry, 1000)
